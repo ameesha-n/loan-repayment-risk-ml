@@ -10,15 +10,13 @@ sys.path.append(str(Path(__file__).resolve().parent))
 from data_loader import load_application_data
 from preprocessing import prepare_data, build_preprocessor
 from evaluation import evaluate_model, compare_models
+from calibration import calibrate_model, evaluate_calibration, plot_calibration
 
 
 RANDOM_STATE = 42
 
 
 def train_logistic_regression(X_train_processed, y_train):
-    """
-    Train Logistic Regression with class balancing.
-    """
     model = LogisticRegression(
         max_iter=1000,
         random_state=RANDOM_STATE,
@@ -31,9 +29,6 @@ def train_logistic_regression(X_train_processed, y_train):
 
 
 def train_random_forest(X_train_processed, y_train):
-    """
-    Train Random Forest with class balancing.
-    """
     model = RandomForestClassifier(
         n_estimators=200,
         max_depth=12,
@@ -49,9 +44,6 @@ def train_random_forest(X_train_processed, y_train):
 
 
 def train_lightgbm(X_train_processed, y_train):
-    """
-    Train LightGBM with class balancing.
-    """
     model = LGBMClassifier(
         n_estimators=200,
         learning_rate=0.05,
@@ -100,7 +92,6 @@ if __name__ == "__main__":
     preprocessor = build_preprocessor(X_train)
 
     X_train_processed = preprocessor.fit_transform(X_train)
-
     X_valid_processed = preprocessor.transform(X_valid)
 
     print("\nPreprocessing completed.")
@@ -117,7 +108,7 @@ if __name__ == "__main__":
 
 
     # --------------------------------------------------
-    # 4. LOGISTIC REGRESSION
+    # 4. TRAIN LOGISTIC REGRESSION
     # --------------------------------------------------
 
     print("\nTraining Logistic Regression...")
@@ -131,7 +122,7 @@ if __name__ == "__main__":
 
 
     # --------------------------------------------------
-    # 5. RANDOM FOREST
+    # 5. TRAIN RANDOM FOREST
     # --------------------------------------------------
 
     print("\nTraining Random Forest...")
@@ -145,7 +136,7 @@ if __name__ == "__main__":
 
 
     # --------------------------------------------------
-    # 6. LIGHTGBM
+    # 6. TRAIN LIGHTGBM
     # --------------------------------------------------
 
     print("\nTraining LightGBM...")
@@ -159,10 +150,10 @@ if __name__ == "__main__":
 
 
     # --------------------------------------------------
-    # 7. EVALUATE MODELS
+    # 7. EVALUATE BASELINE MODELS
     # --------------------------------------------------
 
-    print("\nEvaluating models...")
+    print("\nEvaluating baseline models...")
 
     logistic_results = evaluate_model(
         logistic_model,
@@ -200,9 +191,74 @@ if __name__ == "__main__":
 
 
     # --------------------------------------------------
-    # 9. COMPLETION MESSAGE
+    # 9. CALIBRATE LIGHTGBM
     # --------------------------------------------------
 
     print("\n" + "=" * 70)
-    print("MODEL TRAINING AND EVALUATION COMPLETED!")
+    print("CALIBRATING LIGHTGBM")
     print("=" * 70)
+
+    print("\nUsing sigmoid calibration (Platt scaling)...")
+
+    calibrated_lightgbm = calibrate_model(
+        lightgbm_model,
+        X_train_processed,
+        y_train,
+        method="sigmoid",
+    )
+
+    print("Calibration completed successfully.")
+
+
+    # --------------------------------------------------
+    # 10. EVALUATE CALIBRATION
+    # --------------------------------------------------
+
+    calibration_results = evaluate_calibration(
+        lightgbm_model,
+        calibrated_lightgbm,
+        X_valid_processed,
+        y_valid,
+        model_name="LightGBM",
+    )
+
+
+    # --------------------------------------------------
+    # 11. PLOT CALIBRATION CURVE
+    # --------------------------------------------------
+
+    print("\nGenerating calibration curve...")
+
+    plot_calibration(
+        lightgbm_model,
+        calibrated_lightgbm,
+        X_valid_processed,
+        y_valid,
+        model_name="LightGBM",
+    )
+
+
+    # --------------------------------------------------
+    # 12. FINAL SUMMARY
+    # --------------------------------------------------
+
+    print("\n" + "=" * 70)
+    print("CALIBRATION SUMMARY")
+    print("=" * 70)
+
+    print(
+        f"\nRaw LightGBM Brier Score       : "
+        f"{calibration_results['raw_brier']:.4f}"
+    )
+
+    print(
+        f"Calibrated LightGBM Brier Score: "
+        f"{calibration_results['calibrated_brier']:.4f}"
+    )
+
+    print(
+        f"Brier Score Improvement        : "
+        f"{calibration_results['brier_improvement']:.4f}"
+    )
+
+    print("\nExperiment completed successfully!")

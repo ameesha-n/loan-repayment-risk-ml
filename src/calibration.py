@@ -121,4 +121,15 @@ def plot_calibration(
 
     plt.tight_layout()
 
+    # Save calibration curve for the project report
+    output_path = "results/calibration_curve.png"
+
+    plt.savefig(
+        output_path,
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+    print(f"Calibration curve saved to: {output_path}")
+
     plt.show()
