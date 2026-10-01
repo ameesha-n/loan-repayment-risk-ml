@@ -13,6 +13,8 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
+from lightgbm import LGBMClassifier
+
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from data_loader import load_application_data
@@ -27,10 +29,6 @@ RANDOM_STATE = 42
 # ============================================================
 
 def train_logistic_regression(X_train_processed, y_train):
-    """
-    Train Logistic Regression baseline.
-    """
-
     model = LogisticRegression(
         max_iter=1000,
         random_state=RANDOM_STATE,
@@ -43,10 +41,6 @@ def train_logistic_regression(X_train_processed, y_train):
 
 
 def train_random_forest(X_train_processed, y_train):
-    """
-    Train Random Forest classifier.
-    """
-
     model = RandomForestClassifier(
         n_estimators=200,
         max_depth=12,
@@ -61,14 +55,28 @@ def train_random_forest(X_train_processed, y_train):
     return model
 
 
+def train_lightgbm(X_train_processed, y_train):
+    model = LGBMClassifier(
+        n_estimators=200,
+        learning_rate=0.05,
+        num_leaves=31,
+        max_depth=-1,
+        class_weight="balanced",
+        random_state=RANDOM_STATE,
+        n_jobs=-1,
+        verbosity=-1,
+    )
+
+    model.fit(X_train_processed, y_train)
+
+    return model
+
+
 # ============================================================
 # MODEL EVALUATION
 # ============================================================
 
 def evaluate_model(model, X_valid_processed, y_valid, model_name):
-    """
-    Evaluate a trained classification model.
-    """
 
     y_pred = model.predict(X_valid_processed)
 
@@ -135,16 +143,12 @@ if __name__ == "__main__":
     print(f"Validation samples: {X_valid.shape[0]}")
 
     # --------------------------------------------------------
-    # 3. Build preprocessing pipeline
+    # 3. Preprocessing
     # --------------------------------------------------------
 
     print("\nBuilding preprocessing pipeline...")
 
     preprocessor = build_preprocessor(X_train)
-
-    # IMPORTANT:
-    # Fit preprocessing ONLY on training data.
-    # Then use the learned transformations on validation data.
 
     X_train_processed = preprocessor.fit_transform(X_train)
     X_valid_processed = preprocessor.transform(X_valid)
@@ -155,7 +159,7 @@ if __name__ == "__main__":
     print(f"Processed validation shape: {X_valid_processed.shape}")
 
     # --------------------------------------------------------
-    # 4. Train Logistic Regression
+    # 4. Logistic Regression
     # --------------------------------------------------------
 
     print("\nTraining Logistic Regression...")
@@ -168,7 +172,7 @@ if __name__ == "__main__":
     print("Logistic Regression trained successfully.")
 
     # --------------------------------------------------------
-    # 5. Train Random Forest
+    # 5. Random Forest
     # --------------------------------------------------------
 
     print("\nTraining Random Forest...")
@@ -181,7 +185,20 @@ if __name__ == "__main__":
     print("Random Forest trained successfully.")
 
     # --------------------------------------------------------
-    # 6. Evaluate Logistic Regression
+    # 6. LightGBM
+    # --------------------------------------------------------
+
+    print("\nTraining LightGBM...")
+
+    lightgbm_model = train_lightgbm(
+        X_train_processed,
+        y_train,
+    )
+
+    print("LightGBM trained successfully.")
+
+    # --------------------------------------------------------
+    # 7. Evaluation
     # --------------------------------------------------------
 
     logistic_results = evaluate_model(
@@ -191,10 +208,6 @@ if __name__ == "__main__":
         "Logistic Regression",
     )
 
-    # --------------------------------------------------------
-    # 7. Evaluate Random Forest
-    # --------------------------------------------------------
-
     random_forest_results = evaluate_model(
         random_forest_model,
         X_valid_processed,
@@ -202,50 +215,63 @@ if __name__ == "__main__":
         "Random Forest",
     )
 
+    lightgbm_results = evaluate_model(
+        lightgbm_model,
+        X_valid_processed,
+        y_valid,
+        "LightGBM",
+    )
+
     # --------------------------------------------------------
-    # 8. Model comparison
+    # 8. Model Comparison
     # --------------------------------------------------------
 
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 70)
     print("MODEL COMPARISON")
-    print("=" * 60)
+    print("=" * 70)
 
     print(
         f"\n{'Metric':<15}"
         f"{'Logistic Regression':<22}"
-        f"{'Random Forest':<15}"
+        f"{'Random Forest':<18}"
+        f"{'LightGBM':<15}"
     )
 
-    print("-" * 52)
+    print("-" * 70)
 
     print(
         f"{'Accuracy':<15}"
         f"{logistic_results['accuracy']:<22.4f}"
-        f"{random_forest_results['accuracy']:<15.4f}"
+        f"{random_forest_results['accuracy']:<18.4f}"
+        f"{lightgbm_results['accuracy']:<15.4f}"
     )
 
     print(
         f"{'Precision':<15}"
         f"{logistic_results['precision']:<22.4f}"
-        f"{random_forest_results['precision']:<15.4f}"
+        f"{random_forest_results['precision']:<18.4f}"
+        f"{lightgbm_results['precision']:<15.4f}"
     )
 
     print(
         f"{'Recall':<15}"
         f"{logistic_results['recall']:<22.4f}"
-        f"{random_forest_results['recall']:<15.4f}"
+        f"{random_forest_results['recall']:<18.4f}"
+        f"{lightgbm_results['recall']:<15.4f}"
     )
 
     print(
         f"{'F1 Score':<15}"
         f"{logistic_results['f1']:<22.4f}"
-        f"{random_forest_results['f1']:<15.4f}"
+        f"{random_forest_results['f1']:<18.4f}"
+        f"{lightgbm_results['f1']:<15.4f}"
     )
 
     print(
         f"{'ROC-AUC':<15}"
         f"{logistic_results['roc_auc']:<22.4f}"
-        f"{random_forest_results['roc_auc']:<15.4f}"
+        f"{random_forest_results['roc_auc']:<18.4f}"
+        f"{lightgbm_results['roc_auc']:<15.4f}"
     )
 
     print("\nModel comparison completed!")
