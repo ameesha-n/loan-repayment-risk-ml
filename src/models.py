@@ -10,7 +10,16 @@ sys.path.append(str(Path(__file__).resolve().parent))
 from data_loader import load_application_data
 from preprocessing import prepare_data, build_preprocessor
 from evaluation import evaluate_model, compare_models
-from calibration import calibrate_model, evaluate_calibration, plot_calibration
+from calibration import (
+    calibrate_model,
+    evaluate_calibration,
+    plot_calibration,
+)
+from explainability import (
+    compute_shap_values,
+    plot_global_importance,
+    plot_local_explanation,
+)
 
 
 RANDOM_STATE = 42
@@ -62,9 +71,9 @@ def train_lightgbm(X_train_processed, y_train):
 
 if __name__ == "__main__":
 
-    # --------------------------------------------------
+    # ============================================================
     # 1. LOAD DATASET
-    # --------------------------------------------------
+    # ============================================================
 
     print("Loading dataset...")
 
@@ -73,9 +82,9 @@ if __name__ == "__main__":
     print(f"Dataset shape: {df.shape}")
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 2. TRAIN / VALIDATION SPLIT
-    # --------------------------------------------------
+    # ============================================================
 
     X_train, X_valid, y_train, y_valid = prepare_data(df)
 
@@ -83,9 +92,9 @@ if __name__ == "__main__":
     print(f"Validation samples: {X_valid.shape[0]}")
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 3. PREPROCESSING
-    # --------------------------------------------------
+    # ============================================================
 
     print("\nBuilding preprocessing pipeline...")
 
@@ -107,9 +116,9 @@ if __name__ == "__main__":
     )
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 4. TRAIN LOGISTIC REGRESSION
-    # --------------------------------------------------
+    # ============================================================
 
     print("\nTraining Logistic Regression...")
 
@@ -121,9 +130,9 @@ if __name__ == "__main__":
     print("Logistic Regression trained successfully.")
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 5. TRAIN RANDOM FOREST
-    # --------------------------------------------------
+    # ============================================================
 
     print("\nTraining Random Forest...")
 
@@ -135,9 +144,9 @@ if __name__ == "__main__":
     print("Random Forest trained successfully.")
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 6. TRAIN LIGHTGBM
-    # --------------------------------------------------
+    # ============================================================
 
     print("\nTraining LightGBM...")
 
@@ -149,9 +158,9 @@ if __name__ == "__main__":
     print("LightGBM trained successfully.")
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 7. EVALUATE BASELINE MODELS
-    # --------------------------------------------------
+    # ============================================================
 
     print("\nEvaluating baseline models...")
 
@@ -177,9 +186,9 @@ if __name__ == "__main__":
     )
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 8. MODEL COMPARISON
-    # --------------------------------------------------
+    # ============================================================
 
     results = {
         "Logistic Regression": logistic_results,
@@ -190,9 +199,9 @@ if __name__ == "__main__":
     compare_models(results)
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 9. CALIBRATE LIGHTGBM
-    # --------------------------------------------------
+    # ============================================================
 
     print("\n" + "=" * 70)
     print("CALIBRATING LIGHTGBM")
@@ -210,9 +219,9 @@ if __name__ == "__main__":
     print("Calibration completed successfully.")
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 10. EVALUATE CALIBRATION
-    # --------------------------------------------------
+    # ============================================================
 
     calibration_results = evaluate_calibration(
         lightgbm_model,
@@ -223,9 +232,9 @@ if __name__ == "__main__":
     )
 
 
-    # --------------------------------------------------
+    # ============================================================
     # 11. PLOT CALIBRATION CURVE
-    # --------------------------------------------------
+    # ============================================================
 
     print("\nGenerating calibration curve...")
 
@@ -238,16 +247,16 @@ if __name__ == "__main__":
     )
 
 
-    # --------------------------------------------------
-    # 12. FINAL SUMMARY
-    # --------------------------------------------------
+    # ============================================================
+    # 12. CALIBRATION SUMMARY
+    # ============================================================
 
     print("\n" + "=" * 70)
     print("CALIBRATION SUMMARY")
     print("=" * 70)
 
     print(
-        f"\nRaw LightGBM Brier Score       : "
+        f"\nRaw LightGBM Brier Score        : "
         f"{calibration_results['raw_brier']:.4f}"
     )
 
@@ -257,8 +266,77 @@ if __name__ == "__main__":
     )
 
     print(
-        f"Brier Score Improvement        : "
+        f"Brier Score Improvement         : "
         f"{calibration_results['brier_improvement']:.4f}"
     )
+
+
+    # ============================================================
+    # 13. SHAP EXPLAINABILITY
+    # ============================================================
+
+    print("\n" + "=" * 70)
+    print("SHAP EXPLAINABILITY")
+    print("=" * 70)
+
+    # Get the feature names after preprocessing.
+    # One-hot encoding expands the original features,
+    # so we use the transformed feature names here.
+    feature_names = preprocessor.get_feature_names_out()
+
+    print(
+        f"\nNumber of transformed features: "
+        f"{len(feature_names)}"
+    )
+
+    # Calculate SHAP values using a sample of validation data.
+    # We use the raw LightGBM model because TreeSHAP is
+    # designed for tree-based models.
+    explainer, shap_values, X_shap = compute_shap_values(
+        lightgbm_model,
+        X_valid_processed,
+        sample_size=500,
+    )
+
+    print("SHAP values calculated successfully.")
+
+
+    # ============================================================
+    # 14. GLOBAL SHAP EXPLANATION
+    # ============================================================
+
+    print("\nGenerating global SHAP importance plot...")
+
+    plot_global_importance(
+        shap_values,
+        feature_names,
+    )
+
+
+    # ============================================================
+    # 15. LOCAL SHAP EXPLANATION
+    # ============================================================
+
+    print("\nGenerating individual applicant explanation...")
+
+    plot_local_explanation(
+        shap_values,
+        sample_index=0,
+    )
+
+
+    # ============================================================
+    # 16. FINAL MESSAGE
+    # ============================================================
+
+    print("\n" + "=" * 70)
+    print("SHAP EXPLAINABILITY COMPLETED")
+    print("=" * 70)
+
+    print("\nGenerated files:")
+
+    print("  results/calibration_curve.png")
+    print("  results/shap_summary.png")
+    print("  results/shap_local.png")
 
     print("\nExperiment completed successfully!")
