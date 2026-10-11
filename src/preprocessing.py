@@ -19,7 +19,7 @@ def prepare_data(df):
     """
 
     # TARGET is what we want the model to predict.
-    X = df.drop(columns=["TARGET"])
+    X = df.drop(columns=["TARGET", "SK_ID_CURR"])
     y = df["TARGET"]
 
     # Keep the same proportion of TARGET=0 and TARGET=1
