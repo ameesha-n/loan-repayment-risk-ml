@@ -1,4 +1,5 @@
 
+
 import sys
 from pathlib import Path
 
@@ -26,27 +27,40 @@ from explainability import (
 
 RESULTS_DIR = ROOT_DIR / "results"
 RANDOM_STATE = 42
+SHAP_SAMPLE_SIZE = 500
+TOP_FEATURES = 10
 
 
 def main():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     # --------------------------------------------------
-    # 1. Load the extended dataset and create the split
+    # 1. Load data and preserve applicant IDs
     # --------------------------------------------------
     print("Loading extended dataset...")
     df = load_application_data(extended=True)
 
+    if "SK_ID_CURR" not in df.columns:
+        raise ValueError("Dataset must contain SK_ID_CURR.")
+
+    applicant_ids = df["SK_ID_CURR"].copy()
     X = df.drop(columns=["TARGET", "SK_ID_CURR"])
     y = df["TARGET"]
 
-    X_train, X_valid, y_train, y_valid = train_test_split(
-        X,
-        y,
+    # Split positions, not feature values, so applicant IDs,
+    # labels, and predictions stay aligned.
+    train_pos, valid_pos = train_test_split(
+        np.arange(len(df)),
         test_size=0.20,
         random_state=RANDOM_STATE,
         stratify=y,
     )
+
+    X_train = X.iloc[train_pos]
+    X_valid = X.iloc[valid_pos]
+    y_train = y.iloc[train_pos]
+    y_valid = y.iloc[valid_pos]
+    valid_ids = applicant_ids.iloc[valid_pos].to_numpy()
 
     print(f"\nTraining applicants: {len(X_train):,}")
     print(f"Validation applicants: {len(X_valid):,}")
@@ -54,7 +68,7 @@ def main():
     print(f"Validation default rate: {y_valid.mean():.4f}")
 
     # --------------------------------------------------
-    # 2. Preprocess without fitting on validation data
+    # 2. Fit preprocessing on training data only
     # --------------------------------------------------
     print("\nBuilding preprocessing pipeline...")
     preprocessor = build_preprocessor(X_train)
@@ -65,7 +79,7 @@ def main():
     feature_names = preprocessor.get_feature_names_out().tolist()
 
     # --------------------------------------------------
-    # 3. Train the raw LightGBM model
+    # 3. Train extended LightGBM
     # --------------------------------------------------
     print("\nTraining extended LightGBM...")
     model = train_lightgbm(X_train_processed, y_train)
@@ -103,7 +117,7 @@ def main():
     )
 
     # --------------------------------------------------
-    # 5. Print probability diagnostics
+    # 5. Probability diagnostics
     # --------------------------------------------------
     print("\n" + "=" * 65)
     print("EXTENDED LIGHTGBM: PROBABILITY DIAGNOSTICS")
@@ -118,26 +132,27 @@ def main():
 
     print("\nProbability ranges")
     print(
-        f"Raw model       : {raw_probabilities.min():.6f} "
+        f"Raw model        : {raw_probabilities.min():.6f} "
         f"to {raw_probabilities.max():.6f}"
     )
     print(
-        f"Calibrated model: {calibrated_probabilities.min():.6f} "
+        f"Calibrated model : {calibrated_probabilities.min():.6f} "
         f"to {calibrated_probabilities.max():.6f}"
     )
 
     print("\nBrier scores (lower is better)")
-    print(f"Raw LightGBM          : {raw_brier:.4f}")
-    print(f"Calibrated LightGBM   : {calibrated_brier:.4f}")
-    print(f"Constant-rate baseline: {baseline_brier:.4f}")
-    print(f"Raw-to-calibrated gain: {raw_brier - calibrated_brier:.4f}")
+    print(f"Raw LightGBM           : {raw_brier:.4f}")
+    print(f"Calibrated LightGBM    : {calibrated_brier:.4f}")
+    print(f"Constant-rate baseline : {baseline_brier:.4f}")
+    print(f"Raw-to-calibrated gain : {raw_brier - calibrated_brier:.4f}")
 
     # --------------------------------------------------
-    # 6. Save row-level validation predictions
+    # 6. Save predictions with correct applicant IDs
     # --------------------------------------------------
     predictions_path = RESULTS_DIR / "extended_validation_predictions.csv"
 
     pd.DataFrame({
+        "SK_ID_CURR": valid_ids,
         "actual_target": y_valid.to_numpy(),
         "raw_probability": raw_probabilities,
         "calibrated_probability": calibrated_probabilities,
@@ -168,11 +183,7 @@ def main():
         ax=ax,
     )
 
-    ax.set_title("Extended LightGBM Probability Calibration")
-    ax.set_xlabel("Mean Predicted Probability")
-    ax.set_ylabel("Fraction of Positives")
-    ax.grid(alpha=0.3)
-    ax.legend()
+    ax.set_title("Extended LightGBM Calibration")
     fig.tight_layout()
 
     calibration_path = RESULTS_DIR / "extended_calibration_curve.png"
@@ -200,15 +211,17 @@ def main():
     print(f"Calibration metrics saved: {metrics_path}")
 
     # --------------------------------------------------
-    # 9. SHAP explanations for the raw LightGBM model
+    # 9. SHAP global and local explanations
     # --------------------------------------------------
     print("\nComputing SHAP explanations...")
 
     explainer, shap_values, X_sample = compute_shap_values(
         model,
         X_valid_processed,
-        sample_size=500,
+        sample_size=SHAP_SAMPLE_SIZE,
     )
+
+    sample_ids = valid_ids[:X_sample.shape[0]]
 
     plot_global_importance(
         shap_values,
@@ -222,7 +235,111 @@ def main():
         output_path=str(RESULTS_DIR / "extended_shap_local.png"),
     )
 
-    print("\nExtended analysis completed successfully.")
+    # --------------------------------------------------
+    # 10. Individual-applicant SHAP explanations
+    # --------------------------------------------------
+    print("\nCreating applicant-level SHAP explanations...")
+
+    # TreeExplainer explains the raw LightGBM model.
+    # For binary classification, select the output for
+    # the positive class (default) when SHAP returns
+    # multiple class outputs.
+    values = shap_values.values
+
+    if values.ndim == 3:
+        values = values[:, :, 1]
+
+    if values.ndim != 2:
+        raise ValueError(
+            f"Unexpected SHAP array shape: {values.shape}"
+        )
+
+    if values.shape[1] != len(feature_names):
+        raise ValueError(
+            "SHAP values and transformed feature names do not match."
+        )
+
+    # Each row is aligned with sample_ids and raw_probabilities.
+    explanation_rows = []
+
+    for i, applicant_id in enumerate(sample_ids):
+        contributions = values[i]
+
+        top_indices = np.argsort(np.abs(contributions))[
+            -TOP_FEATURES:
+        ][::-1]
+
+        row = {
+            "SK_ID_CURR": applicant_id,
+            "raw_default_probability": raw_probabilities[i],
+            "calibrated_default_probability": calibrated_probabilities[i],
+            "actual_target": int(y_valid.iloc[i]),
+        }
+
+        for rank, feature_idx in enumerate(top_indices, start=1):
+            contribution = float(contributions[feature_idx])
+
+            row[f"feature_{rank}"] = feature_names[feature_idx]
+            row[f"shap_value_{rank}"] = contribution
+            row[f"direction_{rank}"] = (
+                "higher model output"
+                if contribution > 0
+                else "lower model output"
+                if contribution < 0
+                else "no contribution"
+            )
+
+        explanation_rows.append(row)
+
+    explanations_path = (
+        RESULTS_DIR / "individual_shap_explanations.csv"
+    )
+
+    pd.DataFrame(explanation_rows).to_csv(
+        explanations_path,
+        index=False,
+    )
+
+    print(f"Individual explanations saved: {explanations_path}")
+
+    print("\nExample applicant explanation")
+    if len(explanation_rows) > 0:
+        example = explanation_rows[0]
+
+        print(f"Applicant ID: {example['SK_ID_CURR']}")
+        print(
+            "Raw predicted default probability: "
+            f"{example['raw_default_probability']:.2%}"
+        )
+        print(
+            "Calibrated predicted default probability: "
+            f"{example['calibrated_default_probability']:.2%}"
+        )
+
+        for rank in range(1, TOP_FEATURES + 1):
+            feature = example.get(f"feature_{rank}")
+            contribution = example.get(f"shap_value_{rank}")
+            direction = example.get(f"direction_{rank}")
+
+            if feature is not None:
+                print(
+                    f"  {feature}: SHAP={contribution:.5f} "
+                    f"({direction})"
+                )
+
+    # --------------------------------------------------
+    # 11. Finish
+    # --------------------------------------------------
+    print("\n" + "=" * 65)
+    print("EXTENDED ANALYSIS COMPLETED SUCCESSFULLY")
+    print("=" * 65)
+    print("Generated files:")
+    print(f"  {predictions_path}")
+    print(f"  {calibration_path}")
+    print(f"  {metrics_path}")
+    print(f"  {RESULTS_DIR / 'extended_shap_summary.png'}")
+    print(f"  {RESULTS_DIR / 'extended_shap_local.png'}")
+    print(f"  {explanations_path}")
 
 
 if __name__ == "__main__":
