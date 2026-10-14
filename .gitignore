@@ -1,11 +1,14 @@
-# Dataset
+
+# Dataset CSVs — keep large datasets out of Git
 data/*.csv
+data/processed/
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
 venv/
+env/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -13,5 +16,10 @@ venv/
 # OS
 .DS_Store
 
-# Results
+# Results and generated plots
 results/*
+!results/.gitkeep
+
+# IDE
+.vscode/
+.idea/
